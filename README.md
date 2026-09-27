@@ -158,10 +158,11 @@ MODE=FULL
 ```
 
 ## Images
+
 ![State_flowDiagram.png](images/State_flowDiagram.png)
-![Screenshots](./image1.png)
-(./image2.png)
-(./image3.png)
+![Image 1](images/image1.png)
+![Image 2](images/image2.png)
+![Image 3](images/image3.png)
 
 ## Important project rule
 
