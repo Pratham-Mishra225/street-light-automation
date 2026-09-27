@@ -157,6 +157,12 @@ POWER=220
 MODE=FULL
 ```
 
+## Images
+![State_flowDiagram.png](images/State_flowDiagram.png)
+![Screenshots](./image1.png)
+(./image2.png)
+(./image3.png)
+
 ## Important project rule
 
 The **8086 Assembly program is the decision engine**. The React application only visualizes the state written by the 8086. Demo mode is explicitly local UI simulation and is not presented as 8086 output.
