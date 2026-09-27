@@ -1,0 +1,9 @@
+{
+  "name": "street-light-8086-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js"
+  }
+}
