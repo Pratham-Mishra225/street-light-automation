@@ -1,411 +1,438 @@
-; ================================================================
-; 8086-Based Ambient + Vehicle-Aware Street Light Automation
-; Target: EMU8086 (.COM program)
+; =========================================================
+; 8086 Ambient + Vehicle-Aware Street Light Automation
+; EMU8086 COM Program
 ;
-; Inputs:
-;   Ambient: 1 = Day, 2 = Dusk, 3 = Night
-;   Vehicle: 0 = No vehicle, 1 = Vehicle detected
-;   Position: 1..5 when vehicle is detected
+; Ambient : 1=Day, 2=Dusk, 3=Night, 4=Exit
+; Vehicle : 0=No, 1=Yes
+; Position: 1..5
 ;
-; Lighting state per lamp:
-;   0 = OFF
-;   1 = DIM
-;   2 = FULL
+; Light state:
+; 0=OFF, 1=DIM, 2=FULL
 ;
-; Algorithm:
-;   Day              -> all OFF
-;   Dusk             -> all DIM
-;   Night/no vehicle -> all DIM
-;   Night/vehicle    -> vehicle zone (position +/- 1) FULL,
-;                        remaining lamps DIM
+; Day              -> 00000
+; Dusk             -> 11111
+; Night + No Veh   -> 11111
+; Night + Vehicle  -> vehicle +/- 1 = FULL
 ;
-; The program writes STATE.TXT so the React frontend can visualize
-; the latest 8086 decision. EMU8086's DOS emulation supports file I/O.
-; ================================================================
+; Power: OFF=0W, DIM=20W, FULL=60W
+; Output: STATE.TXT
+; =========================================================
 
 #make_com#
 org 100h
 
 jmp START
 
-; ------------------------- DATA -------------------------
-PROMPT_AMB      db 13,10,'Ambient condition:',13,10
-                db '1. Day',13,10
-                db '2. Dusk',13,10
-                db '3. Night',13,10
-                db '4. Exit',13,10
-                db 'Enter choice: $'
-PROMPT_VEH      db 13,10,'Vehicle detected? 0=No, 1=Yes: $'
-PROMPT_POS      db 13,10,'Vehicle position (1-5): $'
-INVALID         db 13,10,'Invalid input. Try again.',13,10,'$'
-RESULT_MSG      db 13,10,'Decision written to STATE.TXT',13,10,'$'
-NO_VEH_MSG      db 13,10,'Vehicle not detected.',13,10,'$'
+; ---------------- DATA ----------------
 
-FILE_NAME       db 'STATE.TXT',0
-FILE_BUFFER     db 'AMBIENT=0',13,10
-                db 'VEHICLE=0',13,10
-                db 'POSITION=0',13,10
-                db 'LIGHTS=00000',13,10
-                db 'POWER=000',13,10
-                db 'MODE=OFF',13,10
-                db 'SEQ=0000',13,10
-                db 'END',13,10
-FILE_BUFFER_LEN equ $-FILE_BUFFER
+PAMB db 13,10,'Ambient: 1-Day  2-Dusk  3-Night  4-Exit',13,10
+     db 'Choice: $'
+PVEH db 13,10,'Vehicle? 0-No  1-Yes: $'
+PPOS db 13,10,'Position (1-5): $'
+OK   db 13,10,'STATE.TXT updated.',13,10,'$'
+BAD  db 13,10,'Invalid input.',13,10,'$'
 
-LIGHTS          db 0,0,0,0,0
-AMBIENT         db 0
-VEHICLE         db 0
-POSITION        db 0
-POWER           dw 0
-SEQ             dw 0
-HANDLE          dw 0
+FNAME db 'STATE.TXT',0
 
-; ------------------------- MAIN -------------------------
+BUF db 'AMBIENT=0',13,10
+    db 'VEHICLE=0',13,10
+    db 'POSITION=0',13,10
+    db 'LIGHTS=00000',13,10
+    db 'POWER=000',13,10
+    db 'MODE=FULL',13,10
+    db 'SEQ=0000',13,10
+    db 'END',13,10
+
+LIGHTS  db 0,0,0,0,0
+AMBIENT db 0
+VEHICLE db 0
+POSITION db 0
+POWER dw 0
+SEQ dw 0
+HANDLE dw 0
+FLEN dw 85
+
+
+; ---------------- MAIN ----------------
+
 START:
-    mov ax, cs
-    mov ds, ax
+    mov ax,cs
+    mov ds,ax
 
-MAIN_LOOP:
-    lea dx, PROMPT_AMB
-    mov ah, 09h
+MAIN:
+    ; Ambient
+    lea dx,PAMB
+    mov ah,09h
     int 21h
 
-    mov ah, 01h
+    mov ah,01h
     int 21h
-    sub al, '0'
-    mov AMBIENT, al
+    sub al,'0'
+    mov AMBIENT,al
 
-    cmp al, 1
-    jb BAD_AMBIENT
-    cmp al, 4
-    ja BAD_AMBIENT
-    cmp al, 4
-    je END_PROGRAM
-    jmp READ_VEHICLE
+    cmp al,1
+    jb BAD_INPUT
+    cmp al,4
+    ja BAD_INPUT
+    cmp al,4
+    je EXIT
 
-BAD_AMBIENT:
-    lea dx, INVALID
-    mov ah, 09h
-    int 21h
-    jmp MAIN_LOOP
-
-READ_VEHICLE:
-    lea dx, PROMPT_VEH
-    mov ah, 09h
+    ; Vehicle
+    lea dx,PVEH
+    mov ah,09h
     int 21h
 
-    mov ah, 01h
+    mov ah,01h
     int 21h
-    sub al, '0'
-    mov VEHICLE, al
+    sub al,'0'
+    mov VEHICLE,al
 
-    cmp al, 0
-    je DECIDE
-    cmp al, 1
-    je READ_POSITION
+    cmp al,0
+    je NO_VEH
+    cmp al,1
+    jne BAD_INPUT
 
-    lea dx, INVALID
-    mov ah, 09h
-    int 21h
-    jmp MAIN_LOOP
-
-READ_POSITION:
-    lea dx, PROMPT_POS
-    mov ah, 09h
+    ; Position
+    lea dx,PPOS
+    mov ah,09h
     int 21h
 
-    mov ah, 01h
+    mov ah,01h
     int 21h
-    sub al, '0'
-    mov POSITION, al
+    sub al,'0'
+    mov POSITION,al
 
-    cmp al, 1
-    jb BAD_POSITION
-    cmp al, 5
-    ja BAD_POSITION
+    cmp al,1
+    jb BAD_INPUT
+    cmp al,5
+    ja BAD_INPUT
     jmp DECIDE
 
-BAD_POSITION:
-    lea dx, INVALID
-    mov ah, 09h
-    int 21h
-    jmp MAIN_LOOP
+NO_VEH:
+    mov POSITION,0
 
-; ------------------------- DECISION LOGIC -------------------------
+
+; ---------------- DECISION ----------------
+
 DECIDE:
-    ; Default every lamp to OFF.
-    lea si, LIGHTS
-    mov cx, 5
-    xor al, al
-CLEAR_LIGHTS:
-    mov [si], al
+
+    ; First set all OFF
+    lea si,LIGHTS
+    mov cx,5
+    xor al,al
+
+CLEAR:
+    mov [si],al
     inc si
-    loop CLEAR_LIGHTS
+    loop CLEAR
 
-    ; DAY => OFF
-    cmp AMBIENT, 1
-    je CALCULATE
+    ; Day -> OFF
+    cmp AMBIENT,1
+    je SAVE
 
-    ; DUSK => DIM
-    mov al, 1
-    lea si, LIGHTS
-    mov cx, 5
-FILL_DIM:
-    mov [si], al
+    ; Dusk/Night -> DIM
+    lea si,LIGHTS
+    mov cx,5
+    mov al,1
+
+DIM_ALL:
+    mov [si],al
     inc si
-    loop FILL_DIM
+    loop DIM_ALL
 
-    ; NIGHT + no vehicle => DIM
-    cmp AMBIENT, 3
-    jne CALCULATE
-    cmp VEHICLE, 1
-    jne CALCULATE
+    ; Only Night + Vehicle creates FULL zone
+    cmp AMBIENT,3
+    jne SAVE
+    cmp VEHICLE,1
+    jne SAVE
 
-    ; NIGHT + vehicle => current lamp and immediate neighbours FULL.
-    ; Current lamp. Position 1..5 becomes array index 0..4.
-    mov al, POSITION
-    xor ah, ah
+    ; Current lamp
+    mov al,POSITION
+    xor ah,ah
     dec ax
-    lea si, LIGHTS
-    add si, ax
-    mov byte ptr [si], 2
+    lea si,LIGHTS
+    add si,ax
+    mov byte ptr [si],2
 
-    ; Left neighbour = position - 1, if it exists.
-    mov al, POSITION
-    cmp al, 1
-    je SKIP_LEFT
-    xor ah, ah
-    dec ax
-    dec ax
-    lea si, LIGHTS
-    add si, ax
-    mov byte ptr [si], 2
-SKIP_LEFT:
+    ; Left neighbour
+    mov al,POSITION
+    cmp al,1
+    je RIGHT
+    xor ah,ah
+    sub ax,2
+    lea si,LIGHTS
+    add si,ax
+    mov byte ptr [si],2
 
-    ; Right neighbour = position + 1, if it exists.
-    mov al, POSITION
-    xor ah, ah
-    cmp al, 5
-    je SKIP_RIGHT
-    inc ax
-    dec ax
-    lea si, LIGHTS
-    add si, ax
-    mov byte ptr [si], 2
-SKIP_RIGHT:
+RIGHT:
+    ; Right neighbour
+    mov al,POSITION
+    cmp al,5
+    je SAVE
+    xor ah,ah
+    lea si,LIGHTS
+    add si,ax
+    mov byte ptr [si],2
 
-CALCULATE:
+
+; ---------------- POWER ----------------
+
+SAVE:
     call CALC_POWER
-    call BUILD_FILE_BUFFER
-    call WRITE_STATE
+    call BUILD_BUFFER
+    call WRITE_FILE
 
-    lea dx, RESULT_MSG
-    mov ah, 09h
+    lea dx,OK
+    mov ah,09h
     int 21h
 
-    cmp VEHICLE, 0
-    jne MAIN_LOOP
-    lea dx, NO_VEH_MSG
-    mov ah, 09h
-    int 21h
-    jmp MAIN_LOOP
+    jmp MAIN
 
-; ------------------------- POWER -------------------------
-; OFF = 0 W, DIM = 20 W, FULL = 60 W per lamp.
+
 CALC_POWER PROC
-    push ax
-    push bx
-    push cx
-    push si
+    xor ax,ax
+    lea si,LIGHTS
+    mov cx,5
 
-    xor ax, ax
-    lea si, LIGHTS
-    mov cx, 5
-POWER_LOOP:
-    mov bl, [si]
-    xor bh, bh
-    cmp bl, 1
-    je ADD_DIM
-    cmp bl, 2
-    je ADD_FULL
-    jmp POWER_NEXT
-ADD_DIM:
-    add ax, 20
-    jmp POWER_NEXT
-ADD_FULL:
-    add ax, 60
-POWER_NEXT:
+PLOOP:
+    mov bl,[si]
+
+    cmp bl,1
+    je PDIM
+    cmp bl,2
+    je PFULL
+    jmp PNEXT
+
+PDIM:
+    add ax,20
+    jmp PNEXT
+
+PFULL:
+    add ax,60
+
+PNEXT:
     inc si
-    loop POWER_LOOP
-    mov POWER, ax
+    loop PLOOP
 
-    pop si
-    pop cx
-    pop bx
-    pop ax
+    mov POWER,ax
     ret
 CALC_POWER ENDP
 
-; ------------------------- BUFFER -------------------------
-; Fills fixed-width fields in FILE_BUFFER.
-BUILD_FILE_BUFFER PROC
-    push ax
-    push bx
-    push cx
-    push dx
-    push si
-    push di
 
-    ; AMBIENT digit at offset 8.
-    mov al, AMBIENT
-    add al, '0'
-    mov FILE_BUFFER+8, al
+; ---------------- BUILD FILE ----------------
 
-    ; VEHICLE digit at offset 21.
-    mov al, VEHICLE
-    add al, '0'
-    mov FILE_BUFFER+19, al
+BUILD_BUFFER PROC
 
-    ; POSITION digit at offset 33.
-    mov al, POSITION
-    add al, '0'
-    mov FILE_BUFFER+31, al
+    ; Ambient
+    mov al,AMBIENT
+    add al,'0'
+    mov BUF+8,al
 
-    ; LIGHTS digits begin at offset 43.
-    lea si, LIGHTS
-    lea di, FILE_BUFFER+41
-    mov cx, 5
-LIGHT_BUFFER_LOOP:
-    mov al, [si]
-    add al, '0'
-    mov [di], al
+    ; Vehicle
+    mov al,VEHICLE
+    add al,'0'
+    mov BUF+19,al
+
+    ; Position
+    mov al,POSITION
+    add al,'0'
+    mov BUF+31,al
+
+    ; Lights
+    lea si,LIGHTS
+    lea di,BUF+41
+    mov cx,5
+
+LB:
+    mov al,[si]
+    add al,'0'
+    mov [di],al
     inc si
     inc di
-    loop LIGHT_BUFFER_LOOP
+    loop LB
 
-    ; POWER 000..300 at offset 54.
-    mov ax, POWER
-    mov bx, 100
-    xor dx, dx
-    div bx
-    add al, '0'
-    mov FILE_BUFFER+54, al
+    ; Power = 3 digits
+    mov ax,POWER
+    lea di,BUF+54
+    call PUT3
 
-    mov ax, POWER
-    xor dx, dx
-    mov bx, 100
-    div bx
-    mov ax, dx
-    xor dx, dx
-    mov bx, 10
-    div bx
-    add al, '0'
-    mov FILE_BUFFER+55, al
-    add dl, '0'
-    mov FILE_BUFFER+56, dl
+    ; Default mode = DIM
+    mov byte ptr BUF+64,'D'
+    mov byte ptr BUF+65,'I'
+    mov byte ptr BUF+66,'M'
 
-    ; MODE at offset 64.
-    ; Day -> OFF, otherwise if any FULL -> FULL, else DIM.
-    mov byte ptr FILE_BUFFER+64, 'O'
-    mov byte ptr FILE_BUFFER+65, 'F'
-    mov byte ptr FILE_BUFFER+66, 'F'
+    ; Day = OFF
+    cmp AMBIENT,1
+    je OFF_MODE
 
-    cmp AMBIENT, 1
-    je MODE_DONE
+    ; Check for FULL
+    lea si,LIGHTS
+    mov cx,5
 
-    lea si, LIGHTS
-    mov cx, 5
-    xor bx, bx
-CHECK_FULL:
-    cmp byte ptr [si], 2
-    jne CHECK_NEXT
-    mov bx, 1
-    jmp MODE_SCAN_DONE
-CHECK_NEXT:
+CHECK:
+    cmp byte ptr [si],2
+    je FULL_MODE
     inc si
-    loop CHECK_FULL
-MODE_SCAN_DONE:
-    cmp bx, 1
-    jne SET_DIM_MODE
-    mov byte ptr FILE_BUFFER+64, 'F'
-    mov byte ptr FILE_BUFFER+65, 'U'
-    mov byte ptr FILE_BUFFER+66, 'L'
-    mov byte ptr FILE_BUFFER+67, 'L'
-    jmp MODE_DONE
-SET_DIM_MODE:
-    mov byte ptr FILE_BUFFER+64, 'D'
-    mov byte ptr FILE_BUFFER+65, 'I'
-    mov byte ptr FILE_BUFFER+66, 'M'
-MODE_DONE:
+    loop CHECK
 
-    ; Sequence number at offset 73, 0000..9999.
+    ; DIM mode
+    mov byte ptr BUF+67,13
+    mov byte ptr BUF+68,10
+    mov byte ptr BUF+69,'S'
+    mov byte ptr BUF+70,'E'
+    mov byte ptr BUF+71,'Q'
+    mov byte ptr BUF+72,'='
+    lea di,BUF+73
+    mov FLEN,84
+    jmp SEQUENCE
+
+OFF_MODE:
+    mov byte ptr BUF+64,'O'
+    mov byte ptr BUF+65,'F'
+    mov byte ptr BUF+66,'F'
+    mov byte ptr BUF+67,13
+    mov byte ptr BUF+68,10
+    mov byte ptr BUF+69,'S'
+    mov byte ptr BUF+70,'E'
+    mov byte ptr BUF+71,'Q'
+    mov byte ptr BUF+72,'='
+    lea di,BUF+73
+    mov FLEN,84
+    jmp SEQUENCE
+
+FULL_MODE:
+    mov byte ptr BUF+64,'F'
+    mov byte ptr BUF+65,'U'
+    mov byte ptr BUF+66,'L'
+    mov byte ptr BUF+67,'L'
+    mov byte ptr BUF+68,13
+    mov byte ptr BUF+69,10
+    mov byte ptr BUF+70,'S'
+    mov byte ptr BUF+71,'E'
+    mov byte ptr BUF+72,'Q'
+    mov byte ptr BUF+73,'='
+    lea di,BUF+74
+    mov FLEN,85
+
+
+SEQUENCE:
     inc SEQ
-    mov ax, SEQ
-    lea di, FILE_BUFFER+73
-    mov bx, 1000
-    xor dx, dx
-    div bx
-    add al, '0'
-    mov [di], al
+    cmp SEQ,10000
+    jb SEQ_OK
+    mov SEQ,0
 
-    mov ax, dx
-    xor dx, dx
-    mov bx, 100
-    div bx
-    add al, '0'
-    mov [di+1], al
+SEQ_OK:
+    mov ax,SEQ
+    call PUT4
 
-    mov ax, dx
-    xor dx, dx
-    mov bx, 10
-    div bx
-    add al, '0'
-    mov [di+2], al
-    add dl, '0'
-    mov [di+3], dl
+    ; Add END section
+    cmp FLEN,85
+    je FULL_END
 
-    pop di
-    pop si
-    pop dx
-    pop cx
-    pop bx
-    pop ax
+    mov byte ptr BUF+77,13
+    mov byte ptr BUF+78,10
+    mov byte ptr BUF+79,'E'
+    mov byte ptr BUF+80,'N'
+    mov byte ptr BUF+81,'D'
+    mov byte ptr BUF+82,13
+    mov byte ptr BUF+83,10
     ret
-BUILD_FILE_BUFFER ENDP
 
-; ------------------------- FILE I/O -------------------------
-WRITE_STATE PROC
-    push ax
-    push bx
-    push cx
-    push dx
-
-    ; Create/overwrite STATE.TXT.
-    lea dx, FILE_NAME
-    mov cx, 0
-    mov ah, 3Ch
-    int 21h
-    jc WRITE_FAIL
-    mov HANDLE, ax
-
-    mov bx, ax
-    lea dx, FILE_BUFFER
-    mov cx, FILE_BUFFER_LEN
-    mov ah, 40h
-    int 21h
-
-    mov bx, HANDLE
-    mov ah, 3Eh
-    int 21h
-
-WRITE_FAIL:
-    pop dx
-    pop cx
-    pop bx
-    pop ax
+FULL_END:
+    mov byte ptr BUF+78,13
+    mov byte ptr BUF+79,10
+    mov byte ptr BUF+80,'E'
+    mov byte ptr BUF+81,'N'
+    mov byte ptr BUF+82,'D'
+    mov byte ptr BUF+83,13
+    mov byte ptr BUF+84,10
     ret
-WRITE_STATE ENDP
 
-END_PROGRAM:
-    mov ax, 4C00h
+BUILD_BUFFER ENDP
+
+
+; ---------------- NUMBER CONVERSION ----------------
+
+; AX = 000..999
+; DI = destination
+PUT3 PROC
+    mov bx,100
+    xor dx,dx
+    div bx
+    add al,'0'
+    mov [di],al
+
+    mov ax,dx
+    xor dx,dx
+    mov bx,10
+    div bx
+    add al,'0'
+    mov [di+1],al
+    add dl,'0'
+    mov [di+2],dl
+    ret
+PUT3 ENDP
+
+
+; AX = 0000..9999
+; DI = destination
+PUT4 PROC
+    mov bx,1000
+    xor dx,dx
+    div bx
+    add al,'0'
+    mov [di],al
+
+    mov ax,dx
+    xor dx,dx
+    mov bx,100
+    div bx
+    add al,'0'
+    mov [di+1],al
+
+    mov ax,dx
+    xor dx,dx
+    mov bx,10
+    div bx
+    add al,'0'
+    mov [di+2],al
+    add dl,'0'
+    mov [di+3],dl
+    ret
+PUT4 ENDP
+
+
+; ---------------- FILE I/O ----------------
+
+WRITE_FILE PROC
+    lea dx,FNAME
+    xor cx,cx
+    mov ah,3Ch
+    int 21h
+    jc WF_END
+
+    mov HANDLE,ax
+    mov bx,ax
+    lea dx,BUF
+    mov cx,FLEN
+    mov ah,40h
+    int 21h
+
+    mov bx,HANDLE
+    mov ah,3Eh
+    int 21h
+
+WF_END:
+    ret
+WRITE_FILE ENDP
+
+
+BAD_INPUT:
+    lea dx,BAD
+    mov ah,09h
+    int 21h
+    jmp MAIN
+
+EXIT:
+    mov ax,4C00h
     int 21h
