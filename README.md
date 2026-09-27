@@ -157,12 +157,27 @@ POWER=220
 MODE=FULL
 ```
 
-## Images
+## Screenshots & Diagrams
 
-![State_flowDiagram.png](images/State_flowDiagram.png)
-![Image 1](images/image1.png)
-![Image 2](images/image2.png)
-![Image 3](images/image3.png)
+### 1. System Architecture & State Flow Diagram
+Complete data flow from EMU8086 assembly decision logic through `STATE.TXT` to the Node.js bridge and React visualization interface.
+
+![System Architecture and State Flow Diagram](images/State_flowDiagram.png)
+
+### 2. Live Status & Environmental Monitoring
+Live overview displaying active EMU8086 link status, ambient condition detection, and vehicle presence indicators.
+
+![Live Status and Environmental Monitoring](images/image3.png)
+
+### 3. Road View & Adaptive Lighting Visualization
+Visual road representation showing dynamic lamp dimming and bright zone activation around a detected vehicle at lamp L3.
+
+![Road View and Adaptive Lighting Visualization](images/image1.png)
+
+### 4. 8086 Decision Logic & State Parser
+Detailed step-by-step logic breakdown, real-time `STATE.TXT` output polling, and calculated power consumption.
+
+![8086 Decision Logic and State Parser](images/image2.png)
 
 ## Important project rule
 
